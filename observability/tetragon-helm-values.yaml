@@ -1,0 +1,19 @@
+# Helm values override for the cilium/tetragon chart (tetragon release, kube-system).
+#
+# Fix the SOC blind spot: the chart's default exportDenyList drops events from
+# the kube-system namespace AND from host-context processes ("" namespace)
+# from the *file export* (the sink Alloy tails -> Loki -> Grafana). That hides
+# attacks against the most privileged pods (calico-node, kube-proxy) and any
+# static-pod / host-spawned activity -- verified in the 01-calico-scenario
+# simulation (agent gRPC saw the events; the dashboard saw nothing).
+#
+# Note (from the chart's own comment): exportDenyList filters FILE SINKS only;
+# gRPC (tetra getevents) is never filtered.
+#
+# Trade-off: removing kube-system/"" increases export volume (kubelet, host
+# execs). That is the traffic a SOC should see; tune with exportAllowList /
+# fieldFilters if volume becomes a problem.
+tetragon:
+  exportDenyList: |-
+    {"health_check":true}
+    {"namespace":["cilium"]}

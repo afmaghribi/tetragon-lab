@@ -1,0 +1,86 @@
+# Detection policy for the container-escape scenarios in container-escape/.
+#
+# Observe-only (Post), so it complements the enforcing policies already in
+# this directory (copyfail-CVE-2026-31431, dirtyfrag-CVE-2026-43284):
+#
+#   1. __x64_sys_mount  — a block-device filesystem mount (ext4/xfs) from a
+#      /dev/* source: the exact "mount host disk -> chroot" breakout
+#      (calico-node scenario step 1).
+#   2. __x64_sys_openat — any WRITE-ish open() under
+#      /etc/kubernetes/manifests: the "drop an invisible static pod" step
+#      (calico-node scenario step 2). Kubelet READS of the manifests
+#      (O_RDONLY, flags=0) do not match the mask.
+#
+# Events flow out as PROCESS_KPROBE (already in tetragon's export allowlist)
+# -> Alloy -> Loki -> Grafana.
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: container-escape-detection
+spec:
+  kprobes:
+  - call: "__x64_sys_mount"
+    syscall: true
+    args:
+    - index: 0
+      type: "string"
+      label: "source"
+    - index: 1
+      type: "string"
+      label: "target"
+    - index: 2
+      type: "string"
+      label: "fstype"
+    - index: 3
+      type: "ulong"
+      label: "flags"
+    tags:
+    - "container-escape"
+    - "host-disk-mount"
+    - "calico-scenario"
+    message: "host block-device mount detected (mount+chroot container breakout)"
+    selectors:
+    - matchArgs:
+      - index: 2
+        operator: "Equal"
+        values:
+        - "ext4"
+        - "xfs"
+      - index: 0
+        operator: "Prefix"
+        values:
+        - "/dev/"
+      matchActions:
+      - action: Post
+
+  - call: "__x64_sys_openat"
+    syscall: true
+    args:
+    - index: 0
+      type: "int"
+      label: "dirfd"
+    - index: 1
+      type: "string"
+      label: "pathname"
+    - index: 2
+      type: "int"
+      label: "flags"
+    tags:
+    - "container-escape"
+    - "static-pod-manifest"
+    - "invisible-pod"
+    message: "write into /etc/kubernetes/manifests (static pod injection)"
+    selectors:
+    - matchArgs:
+      - index: 1
+        operator: "Prefix"
+        values:
+        - "/etc/kubernetes/manifests"
+      - index: 2
+        operator: "Mask"
+        values:
+        - "1"    # O_WRONLY
+        - "2"    # O_RDWR
+        - "0x200" # O_TRUNC
+      matchActions:
+      - action: Post

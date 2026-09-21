@@ -1,0 +1,74 @@
+# Helm values for the tetragon event shipper (chart: grafana/alloy, app v1.19.2).
+#
+# Replaces the raw-manifest Alloy DaemonSet (20-alloy-tetragon.yaml).
+# Tails the tetragon export file on EVERY node (tolerations for control-plane)
+# and pushes to Loki with labels the dashboard reads:
+#   job=tetragon, cluster=k8s-lab, namespace=<event pod ns>,
+#   policy_name=<TracingPolicy>, tag=<technique tag, tags[1]>
+controller:
+  type: daemonset
+  # run on ALL nodes incl. tainted control-plane — the tetragon export file is
+  # per-node; without this, events from control-plane nodes never ship
+  # (that was the blind spot found during the calico-node simulation).
+  tolerations:
+  - operator: Exists
+  volumes:
+    extra:
+    - name: tetragon-export
+      hostPath:
+        path: /var/run/cilium/tetragon
+        type: DirectoryOrCreate
+    - name: alloy-data
+      hostPath:
+        path: /var/lib/alloy/data
+        type: DirectoryOrCreate
+
+alloy:
+  # persist tail positions on the node (hostPath above) so pod restarts
+  # don't re-read the export file from the head (duplicate events)
+  storagePath: /var/lib/alloy/data
+  mounts:
+    extra:
+    - name: tetragon-export
+      mountPath: /var/run/cilium/tetragon
+      readOnly: true
+    - name: alloy-data
+      mountPath: /var/lib/alloy/data
+  configMap:
+    content: |-
+      // Cluster name for the $cluster dashboard variable
+      local.file_match "tetragon" {
+        path_targets = [{
+          __address__ = "localhost",
+          job         = "tetragon",
+          cluster     = "k8s-lab",
+          __path__    = "/var/run/cilium/tetragon/tetragon.log",
+        }]
+      }
+
+      loki.source.file "tetragon" {
+        targets    = local.file_match.tetragon.targets
+        forward_to = [loki.process.tetragon.receiver]
+      }
+
+      loki.process "tetragon" {
+        // extract pod namespace + policy name + technique tag from the
+        // tetragon json event (JMESPath: array index is [1], NOT .1)
+        stage.json {
+          expressions = {
+            namespace   = "process_exec.process.pod.namespace",
+            policy_name = "process_kprobe.policy_name",
+            tag         = "process_kprobe.tags[1]",
+          }
+        }
+        stage.labels {
+          values = { namespace = "namespace", policy_name = "policy_name", tag = "tag" }
+        }
+        forward_to = [loki.write.loki.receiver]
+      }
+
+      loki.write "loki" {
+        endpoint {
+          url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+        }
+      }

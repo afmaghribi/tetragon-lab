@@ -12,10 +12,15 @@
 #   PRIV_ONLY=1 ./find-privileged-pods.sh      # only truly privileged
 set -u
 
-NS="${1:+-n $1}"
+NS=""
+ALL="-A"                              # no namespace given -> query ALL namespaces
+if [ $# -ge 1 ]; then
+	NS="-n $1"
+	ALL=""                              # explicit namespace -> scope to it only
+fi
 PRIV_ONLY="${PRIV_ONLY:-0}"
 
-kubectl get pods $NS -o json | jq -r --argjson priv "$PRIV_ONLY" '
+kubectl get pods $NS $ALL -o json | jq -r --argjson priv "$PRIV_ONLY" '
   .items[]
   | . as $pod
   | .spec.containers[]

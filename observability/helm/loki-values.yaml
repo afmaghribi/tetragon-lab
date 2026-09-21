@@ -1,0 +1,57 @@
+# Helm values for Loki (chart: grafana/loki, app v3.6.12).
+#
+# Replaces the raw-manifest Loki (10-loki.yaml). Single binary, filesystem
+# storage on a local-path PVC. Grafana DS + the alloy loki.write endpoint
+# point at http://loki.monitoring.svc.cluster.local:3100 — the service that
+# this chart exposes (verified via `helm template`), so nothing downstream
+# needs to change.
+deploymentMode: SingleBinary
+
+loki:
+  auth_enabled: false
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  schemaConfig:
+    configs:
+    - from: "2024-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+  limits_config:
+    allow_structured_metadata: true
+
+singleBinary:
+  replicas: 1
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: local-path
+
+# leave SSD targets disabled in SingleBinary mode (chart validation checks
+# these TOP-LEVEL replicas, not values under `simpleScalable`)
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0
+
+gateway:
+  # expose single-binary HTTP directly on the `loki` service :3100
+  enabled: false
+
+test:
+  enabled: false
+
+# lab-sized: skip canary + memcached caches
+lokiCanary:
+  enabled: false
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
