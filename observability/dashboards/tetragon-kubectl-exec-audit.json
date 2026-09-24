@@ -1559,6 +1559,58 @@
           }
         ],
         "type": "table"
+      },
+      {
+        "type": "timeseries",
+        "title": "core_pattern escape stages",
+        "id": 99,
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 30
+        },
+        "datasource": {
+          "type": "loki",
+          "uid": "bfy0sk8ffnaioe"
+        },
+        "description": "Two stages of the 02-core-pattern-scenario. overwrite = openat write to /proc/sys/kernel/core_pattern; exec = security_bprm_check of the staged handler binary under the containerd overlay upperdir (the moment the attacker's command actually runs as host root).",
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "palette-classic"
+            },
+            "custom": {
+              "drawStyle": "bars",
+              "fillOpacity": 50,
+              "lineWidth": 1
+            }
+          },
+          "overrides": []
+        },
+        "targets": [
+          {
+            "expr": "sum by (stage, namespace, pod) (count_over_time({cluster=~\"$cluster\", job=\"$export_job\", tag=~\"core-pattern\"} [$__auto]))",
+            "legendFormat": "{{stage}} {{namespace}}/{{pod}}",
+            "refId": "A",
+            "datasource": {
+              "type": "loki",
+              "uid": "bfy0sk8ffnaioe"
+            }
+          }
+        ],
+        "options": {
+          "legend": {
+            "displayMode": "table",
+            "placement": "bottom",
+            "calcs": [
+              "sum"
+            ]
+          },
+          "tooltip": {
+            "mode": "all"
+          }
+        }
       }
     ],
     "refresh": "",

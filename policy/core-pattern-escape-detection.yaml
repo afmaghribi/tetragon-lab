@@ -1,0 +1,93 @@
+# Detection policy for 02-core-pattern-scenario (core_pattern usermodehelper escape).
+#
+# Observe-only (Post), sibling of container-escape-detection.yaml.
+# The escape has two stages — this policy catches BOTH:
+#
+#   STAGE 1 (overwrite): the attacker writes a pipe handler into the
+#     node-wide sysctl:
+#         echo '|/host/path/handler IP PORT' > /proc/sys/kernel/core_pattern
+#     Detected on __x64_sys_openat: opening "/proc/sys/kernel/core_pattern"
+#     with write flags (O_WRONLY/O_RDWR/O_TRUNC). Plain readers (cat / apport
+#     / kubelet) open O_RDONLY (flags=0 -> no match), so only *writers* fire.
+#
+#   STAGE 2 (execution): when any process later crashes, the kernel runs the
+#     staged handler via call_usermodehelper with host root + init namespaces.
+#     Detected on security_bprm_check: an exec of a binary living under the
+#     containerd overlayfs upperdir /var/lib/containerd/
+#     io.containerd.snapshotter.v1.overlayfs/snapshots/... — the attacker's
+#     .x-handler script and its .revsh helper. This catches the *execution*
+#     regardless of what the attacker's payload does (reverse shell, webhook,
+#     file write, ...), not just the handler being written.
+#
+#     security_bprm_check is an LSM hook that fires on EVERY exec — including
+#     kernel-internal usermodehelper execs that never hit the sys_execve
+#     entry — and arg0 (type "linux_binprm") resolves the bprm->file path, so
+#     matchArgs Prefix filters on the path string.
+#
+# Follow-up visibility: the handler exec also produces a process_exec with
+# pod=""/"" (host context, parent kthreadd) whose binary lives under the
+# containerd overlayfs upperdir. Default process_exec export picks these up
+# (the tetragon exportDenyList override in ../observability already unblocks
+# the "" host-context events).
+#
+# Events flow out as PROCESS_KPROBE -> Alloy -> Loki -> Grafana.
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: core-pattern-escape-detection
+spec:
+  kprobes:
+  # Stage 1 — the overwrite
+  - call: "__x64_sys_openat"
+    syscall: true
+    args:
+    - index: 0
+      type: "int"
+      label: "dirfd"
+    - index: 1
+      type: "string"
+      label: "pathname"
+    - index: 2
+      type: "int"
+      label: "flags"
+    tags:
+    - "container-escape"
+    - "core-pattern"
+    - "core-pattern-overwrite"
+    message: "sysctl write to kernel.core_pattern (usermodehelper container breakout)"
+    selectors:
+    - matchArgs:
+      - index: 1
+        operator: "Equal"
+        values:
+        - "/proc/sys/kernel/core_pattern"
+      - index: 2
+        operator: "Mask"
+        values:
+        - "1"      # O_WRONLY
+        - "2"      # O_RDWR
+        - "0x200"  # O_TRUNC
+      matchActions:
+      - action: Post
+
+  # Stage 2 — the malicious command actually executing
+  - call: "security_bprm_check"
+    syscall: false
+    args:
+    - index: 0
+      type: "linux_binprm"
+      label: "bprm"
+    tags:
+    - "container-escape"
+    - "core-pattern"
+    - "core-pattern-exec"
+    - "usermodehelper"
+    message: "exec of container-overlay binary on host (core_pattern handler running)"
+    selectors:
+    - matchArgs:
+      - index: 0
+        operator: "Prefix"
+        values:
+        - "/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/"
+      matchActions:
+      - action: Post

@@ -5,9 +5,11 @@ Everything below is for the *authorized test cluster* (`k8s-master22` /
 Kubernetes 1.28.15, kubeadm).
 
 > This file is the general playbook. The **verified, step-by-step Calico
-> scenario** (mount+chroot → invisible static pod → kubelet-exec) lives in
-> `01-privileged-workload-scenario/` — use that for the demo; this file provides the
-> surrounding context and alternatives.
+> scenarios** live in the numbered dirs — use those for the demo:
+> - `01-privileged-workload-scenario/` — mount+chroot → invisible static pod → kubelet-exec
+> - `02-core-pattern-scenario/` — core_pattern pipe handler → host-root reverse shell
+>
+> This file provides the surrounding context and alternatives.
 
 ## 0. Environment notes for this cluster
 
@@ -31,8 +33,8 @@ On this cluster you'll legitimately find:
 
 | Pod                | privileged | hostPID | hostNetwork | Escape surface               |
 |--------------------|-----------|---------|-------------|------------------------------|
-| `calico-node-*`    | true      | false   | true        | mount+chroot                 |
-| `kube-proxy-*`     | true      | false   | true        | mount+chroot                 |
+| `calico-node-*`    | true      | false   | true        | mount+chroot, core_pattern   |
+| `kube-proxy-*`     | true      | false   | true        | mount+chroot, core_pattern   |
 | `etcd/apiserver/...` | false   | false   | true        | (control-plane, hostNet only)|
 
 ## 2. Scenario A — realistic: "compromised CNI agent" (privileged calico-node)
@@ -74,15 +76,11 @@ The `01-privileged-workload-scenario` invisible static pod carries `hostPID: tru
 + `hostNetwork` + `privileged`, so its step 3 gives this full escape via the
 kubelet exec.
 
-## 4. Classic one-off techniques (context, not yet a scenario dir)
+## 4. Classic one-off techniques
 
-These were prototyped during the lab; they are **documented here for context**
-but their manifests/scripts were removed in the restructure (scenario dirs
-are the new format — contribute `NN-<target>-scenario/` if you want to keep one):
-
-- **core_pattern puddle**: privileged pod + host `/proc/sys` access → crash a
-  child; pipe handler runs as host root. Overlay-upperdir trick:
-  `mount | sed -n 's/.*\upperdir=\([^,]*\).*/\1/p'`.
+- **core_pattern** — now a full verified scenario: see
+  `02-core-pattern-scenario/` (privileged-only pipe-handler escape; the
+  overlay-upperdir trick makes the handler host-visible without hostPath).
 - **ptrace injection**: needs `hostPID: true` + `CAP_SYS_PTRACE` +
   `kernel.yama.ptrace_scope=0`.
 - **cgroup release_agent (v1)**: cgroup-v1 node only (see §0).
@@ -107,11 +105,12 @@ Prefer the **already-existing calico-node** for the headline story.
 ## 6. Cleanup
 
 ```sh
-# calico scenario:
+# scenario 01 (calico):
 rm /etc/kubernetes/manifests/node-telemetry.yaml   # (host root, via chroot)
 /tmp/mnt umount /dev/vda1 /mnt                    # unmount host disk
-# restore host core_pattern if you used the core_pattern trick:
-echo core > /proc/sys/kernel/core_pattern         # on HOST (from escaped shell)
+# scenario 02 — MANDATORY: restore host core_pattern (from the reverse shell):
+echo '|/usr/share/apport/apport -p%p -s%s -c%c -d%d -P%P -u%u -g%g -F%F -- %E' \
+  > /proc/sys/kernel/core_pattern                 # or: echo core > ...
 # drop pages / reboot to clear page-cache corruption from dirtyfrag/copyfail demos
 kubectl delete ns escape   # optional
 ```

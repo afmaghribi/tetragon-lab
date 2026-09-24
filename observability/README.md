@@ -85,3 +85,29 @@ Because Tetragon watches for `process_exec`, the escape/`kubectl exec`
 events you demo in `container-escape/` (including the kubelet-API execs)
 show up here — nice for the "observe → analyze → enforce" story, alongside
 the TracingPolicies in `../policy/`.
+
+Coverage per scenario:
+
+| Scenario | Policy | Dashboard surface |
+|----------|--------|-------------------|
+| `01-privileged-workload-scenario` | `container-escape-detection.yaml` (`host-disk-mount`, `static-pod-manifest` tags) | "Escape technique timeline" + "TracingPolicy (kprobe) Events" |
+| `02-core-pattern-scenario` | `core-pattern-escape-detection.yaml` — two stages: `core-pattern-overwrite` (openat write to the sysctl) + `core-pattern-exec` (security_bprm_check of the staged handler) | "core_pattern escape stages" panel (splits by `stage`) + timeline |
+
+Alloy ships two technique labels:
+
+- `tag` = `process_kprobe.tags[1]` → technique *family* (`core-pattern`, `host-disk-mount`, `static-pod-manifest`, ...)
+- `stage` = `process_kprobe.tags[2]` → *stage within* a technique (`core-pattern-overwrite` vs `core-pattern-exec`)
+
+The alert rule `tetragon-escape-detections` ("Container escape detected ...")
+counts events with any of the three tags: `host-disk-mount`,
+`static-pod-manifest`, `core-pattern`.
+
+> Note for `02`: stage `-overwrite` fires on the `openat(O_WRONLY/O_TRUNC)` of
+> the sysctl — the moment the attacker writes the pipe handler, before any
+> crash. Stage `-exec` fires on `security_bprm_check` when the kernel actually
+> execs the handler: the staged binary's path resolves through
+> `linux_binprm` and matches the containerd overlayfs upperdir prefix
+> `/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/`.
+> That exec runs host-context (parent kthreadd), so it also shows up in the
+> "Host-context processes (init tree)" table — exactly why `exportDenyList`
+> above stops hiding `""` namespace events.

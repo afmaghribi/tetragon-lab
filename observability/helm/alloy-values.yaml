@@ -52,17 +52,22 @@ alloy:
       }
 
       loki.process "tetragon" {
-        // extract pod namespace + policy name + technique tag from the
+        // extract pod namespace + policy name + technique tags from the
         // tetragon json event (JMESPath: array index is [1], NOT .1)
+        //   tag   = tags[1]  -> the technique family (host-disk-mount,
+        //                        static-pod-manifest, core-pattern, ...)
+        //   stage = tags[2]  -> the specific stage within a technique
+        //                        (core-pattern-overwrite vs core-pattern-exec)
         stage.json {
           expressions = {
             namespace   = "process_exec.process.pod.namespace",
             policy_name = "process_kprobe.policy_name",
             tag         = "process_kprobe.tags[1]",
+            stage       = "process_kprobe.tags[2]",
           }
         }
         stage.labels {
-          values = { namespace = "namespace", policy_name = "policy_name", tag = "tag" }
+          values = { namespace = "namespace", policy_name = "policy_name", tag = "tag", stage = "stage" }
         }
         forward_to = [loki.write.loki.receiver]
       }
